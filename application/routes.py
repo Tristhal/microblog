@@ -3,26 +3,28 @@ from flask_login import current_user, login_user, login_required, logout_user
 from flask import request
 from werkzeug.urls import url_parse
 from application import app, db
-from application.models import User
-from application.forms import LoginForm, RegistrationForm, EditProfileForm
+from application.models import User, Post
+from application.forms import LoginForm, RegistrationForm, EditProfileForm, PostForm
 from datetime import datetime
 
-@app.route('/')
-@app.route('/index')
+@app.route('/', methods=['GET', 'POST'])
+@app.route('/index', methods=['GET', 'POST'])
 @login_required
 #View function
 def index():
-    posts = [
-        {
-            'author': {'username': 'John'},
-            'body': 'Beautiful day in Portland!'
-        },
-        {
-            'author': {'username': 'Susan'},
-            'body': 'The Avengers movie was so cool!'
-        }
-    ]
-    return render_template('index.html', title='Home', posts=posts) #substitutes {{ ... }} with corresponding values
+    form = PostForm()
+    if form.validate_on_submit():
+        post = Post(body=form.post.data, autr=current_user)
+        db.session.add(post)
+        db.session.commit()
+        flash('Your post is now live!')
+        return redirect(url_for('index')) # Post/Redirect/Get Pattern, When refreshing a browser the last request is issued if not this then the browser will ask for form resubmition
+
+    
+    posts = current_user.followed_posts().all()
+    for post in posts:
+        print(posts.author.avatar(36))
+    return render_template('index.html', title='Home Page', form=form, posts=posts) #substitutes {{ ... }} with corresponding values
 
 @app.route('/user/<username>')
 @login_required
@@ -73,7 +75,7 @@ def login():
         return redirect(url_for('index'))
     return render_template('login.html', title='Sign In', form=form)
 
-@app.route('/register', methods = ['GET', 'POST'])
+@app.route('/register', methods=['GET', 'POST'])
 def register():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
@@ -95,7 +97,44 @@ def before_request():
     if current_user.is_authenticated:
         current_user.last_seen = datetime.utcnow()
         db.session.commit()
+
 @app.route('/logout')
 def logout():
     logout_user()
     return redirect(url_for('index'))
+
+@app.route('/follow/<username>')
+@login_required
+def follow(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('User {} not found.'.format(username))
+        return redirect(url_for('index'))
+    if user == current_user:
+        flash('You cannot follow yourself!')
+        return redirect(url_for('user', username=username))
+    current_user.follow(user)
+    db.session.commit()
+    flash('You are following {}!'.format(username))
+    return redirect(url_for('user', username=username))
+
+@app.route('/unfollow/<username>')
+@login_required
+def unfollow(username):
+    user = User.query.filter_by(username=username).first()
+    if user is None:
+        flash('User {} not found.'.format(username))
+        return redirect(url_for('index'))
+    if user == current_user:
+        flash('You cannot unfollow yourself!')
+        return redirect(url_for('user', username=username))
+    current_user.unfollow(user)
+    db.session.commit()
+    flash('You are not following {}.'.format(username))
+    return redirect(url_for('user', username=username))
+
+@app.route('/explore')
+@login_required
+def explore():
+    posts = Post.query.order_by(Post.timestamp.desc()).all()
+    return render_template('index.html', title='Explore', posts=posts)
